@@ -41,11 +41,21 @@ private:
 	VkQueue m_VkPresentQueue;
 
 	VkSwapchainKHR m_VkSwapChain;
-	std::vector<VkImage> m_VkSwapChainImages;
 	VkFormat m_VkSwapChainImageFormat;
 	VkExtent2D m_VkSwapChainExtent;
+	VkPipelineLayout m_VkPipelineLayout;
+	VkRenderPass m_VkRenderPass;
+	VkPipeline m_VkGraphicsPipeline;
+	VkCommandPool m_VkCommandPool;
 
+	std::vector<VkCommandBuffer> m_VkCommandBuffers;
+	std::vector<VkImage> m_VkSwapChainImages;
 	std::vector<VkImageView> m_VkSwapChainImageViews;
+	std::vector<VkFramebuffer> m_VkSwapChainFramebuffers;
+	std::vector<VkSemaphore> m_VkImageAvailableSemaphores;
+	std::vector<VkSemaphore> m_VkRenderFinishedSemaphores;
+	std::vector<VkFence> m_VkInFlightFences;
+	size_t m_CurrentFrame = 0;
 
 	bool m_EnableValidationLayers = false;
 
@@ -56,6 +66,8 @@ private:
 	void __initWindow();
 	void __initVulkan();
 
+	void __drawFrame();
+
 	void __createVulkanInstance();
 	void __setupDebugCallback();
 	void __createSurface();
@@ -63,7 +75,12 @@ private:
 	void __createLogicalDevice();
 	void __createSwapChain();
 	void __createImageViews();
+	void __createRenderPass();
 	void __createGraphicsPipeline();
+	void __createFrameBuffers();
+	void __createCommandPool();
+	void __createCommandBuffers();
+	void __createSyncObjects();
 
 	VkShaderModule  __createShaderModule(const std::vector<char>& vCode);
 
