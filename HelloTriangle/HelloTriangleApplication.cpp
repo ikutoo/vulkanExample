@@ -1,5 +1,19 @@
 #include "HelloTriangleApplication.h"
+#include <map>
+#include <set>
+#include <algorithm>
+#include <fstream>
 
+namespace
+{
+	const int WINDOW_WIDTH = 800;
+	const int WINDOW_HEIGHT = 600;
+	const std::vector<const char*> VALIDATION_LAYERS = { "VK_LAYER_LUNARG_standard_validation" };
+	const std::vector<const char*> DEVICE_EXTNESIONS = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+}
+
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::run()
 {
 	__init();
@@ -7,12 +21,22 @@ void CHelloTriangleApplication::run()
 	__cleanup();
 }
 
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__init()
 {
+#ifdef _DEBUG
+	m_EnableValidationLayers = true;
+#else
+	m_EnableValidationLayers = false;
+#endif
+
 	__initWindow();
 	__initVulkan();
 }
 
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__initWindow()
 {
 	glfwInit();
@@ -23,25 +47,288 @@ void CHelloTriangleApplication::__initWindow()
 	m_pGLFWWindow = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan", nullptr, nullptr);
 }
 
+//******************************************************************************************
+//FUNCTION:
+static VKAPI_ATTR VkBool32 VKAPI_CALL __debugCallback(
+	VkDebugUtilsMessageSeverityFlagBitsEXT vMessageSeverity,
+	VkDebugUtilsMessageTypeFlagsEXT vMessageType,
+	const VkDebugUtilsMessengerCallbackDataEXT* vCallbackData,
+	void* vUserData)
+{
+	std::cerr << "validation layer: " << vCallbackData->pMessage << std::endl;
+	return VK_FALSE;
+}
+
+//******************************************************************************************
+//FUNCTION:
+static std::vector<char> __readFile(const std::string& vFilename) {
+	std::ifstream File(vFilename, std::ios::ate | std::ios::binary);
+
+	if (!File.is_open())
+		throw std::runtime_error("failed to open file!");
+
+	size_t FileSize = (size_t)File.tellg();
+	std::vector<char> Buffer(FileSize);
+
+	File.seekg(0);
+	File.read(Buffer.data(), FileSize);
+
+	File.close();
+
+	return Buffer;
+}
+
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__initVulkan()
 {
 	__createVulkanInstance();
+	__setupDebugCallback();
+	__createSurface();
+	__pickPhysicalDevice();
+	__createLogicalDevice();
+	__createSwapChain();
+	__createImageViews();
+	__createGraphicsPipeline();
 }
 
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__pickPhysicalDevice()
+{
+	uint32_t DeviceCount = 0;
+	vkEnumeratePhysicalDevices(m_VkInstance, &DeviceCount, nullptr);
+
+	if (0 == DeviceCount) throw std::runtime_error("failed to find GPUs with Vulkan support!");
+
+	std::vector<VkPhysicalDevice> Devices(DeviceCount);
+	vkEnumeratePhysicalDevices(m_VkInstance, &DeviceCount, Devices.data());
+
+	std::multimap<int, VkPhysicalDevice> Candidates;
+	for (const auto& Device : Devices)
+	{
+		if (__isDeviceSuitable(Device))
+		{
+			m_VkPhysicalDevice = Device;
+			break;
+		}
+	}
+
+	if (m_VkPhysicalDevice == VK_NULL_HANDLE) throw std::runtime_error("failed to find a suitable GPU!");
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__createLogicalDevice()
+{
+	SQueueFamilyIndices Indices = __findQueueFamilies(m_VkPhysicalDevice);
+
+	std::vector<VkDeviceQueueCreateInfo> QueueCreateInfos;
+	std::set<uint32_t> UniqueQueueFamilies = { Indices.GraphicsFamily.value(), Indices.PresentFamily.value() };
+
+	float QueuePriority = 1.0f;
+	for (uint32_t QueueFamily : UniqueQueueFamilies)
+	{
+		VkDeviceQueueCreateInfo QueueCreateInfo = {};
+		QueueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		QueueCreateInfo.queueFamilyIndex = QueueFamily;
+		QueueCreateInfo.queueCount = 1;
+		QueueCreateInfo.pQueuePriorities = &QueuePriority;
+		QueueCreateInfos.push_back(QueueCreateInfo);
+	}
+
+	VkPhysicalDeviceFeatures deviceFeatures = {};
+
+	VkDeviceCreateInfo CreateInfo = {};
+	CreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+	CreateInfo.queueCreateInfoCount = static_cast<uint32_t>(QueueCreateInfos.size());
+	CreateInfo.pQueueCreateInfos = QueueCreateInfos.data();
+
+	CreateInfo.pEnabledFeatures = &deviceFeatures;
+
+	CreateInfo.enabledExtensionCount = static_cast<uint32_t>(DEVICE_EXTNESIONS.size());
+	CreateInfo.ppEnabledExtensionNames = DEVICE_EXTNESIONS.data();
+
+	if (m_EnableValidationLayers)
+	{
+		CreateInfo.enabledLayerCount = static_cast<uint32_t>(VALIDATION_LAYERS.size());
+		CreateInfo.ppEnabledLayerNames = VALIDATION_LAYERS.data();
+	}
+	else
+	{
+		CreateInfo.enabledLayerCount = 0;
+	}
+
+	if (vkCreateDevice(m_VkPhysicalDevice, &CreateInfo, nullptr, &m_VkDevice) != VK_SUCCESS)
+		throw std::runtime_error("failed to create logical device!");
+
+	vkGetDeviceQueue(m_VkDevice, Indices.GraphicsFamily.value(), 0, &m_VkGraphicsQueue);
+	vkGetDeviceQueue(m_VkDevice, Indices.PresentFamily.value(), 0, &m_VkPresentQueue);
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__createSwapChain()
+{
+	SSwapChainSupportDetails SwapChainSupport = __querySwapChainSupport(m_VkPhysicalDevice);
+
+	VkSurfaceFormatKHR SurfaceFormat = __chooseSwapSurfaceFormat(SwapChainSupport.Formats);
+	VkPresentModeKHR PresentMode = __chooseSwapPresentMode(SwapChainSupport.PresentModes);
+	VkExtent2D Extent = __chooseSwapExtent(SwapChainSupport.Capabilities);
+
+	uint32_t ImageCount = SwapChainSupport.Capabilities.minImageCount + 1;
+	if (SwapChainSupport.Capabilities.maxImageCount > 0 && ImageCount > SwapChainSupport.Capabilities.maxImageCount)
+	{
+		ImageCount = SwapChainSupport.Capabilities.maxImageCount;
+	}
+
+	VkSwapchainCreateInfoKHR CreateInfo = {};
+	CreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+	CreateInfo.surface = m_VkSurface;
+
+	CreateInfo.minImageCount = ImageCount;
+	CreateInfo.imageFormat = SurfaceFormat.format;
+	CreateInfo.imageColorSpace = SurfaceFormat.colorSpace;
+	CreateInfo.imageExtent = Extent;
+	CreateInfo.imageArrayLayers = 1;
+	CreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+	SQueueFamilyIndices Indices = __findQueueFamilies(m_VkPhysicalDevice);
+	uint32_t QueueFamilyIndices[] = { Indices.GraphicsFamily.value(), Indices.PresentFamily.value() };
+
+	if (Indices.GraphicsFamily != Indices.PresentFamily)
+	{
+		CreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+		CreateInfo.queueFamilyIndexCount = 2;
+		CreateInfo.pQueueFamilyIndices = QueueFamilyIndices;
+	}
+	else
+	{
+		CreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	}
+
+	CreateInfo.preTransform = SwapChainSupport.Capabilities.currentTransform;
+	CreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+	CreateInfo.presentMode = PresentMode;
+	CreateInfo.clipped = VK_TRUE;
+
+	CreateInfo.oldSwapchain = VK_NULL_HANDLE;
+
+	if (vkCreateSwapchainKHR(m_VkDevice, &CreateInfo, nullptr, &m_VkSwapChain) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create swap chain!");
+	}
+
+	vkGetSwapchainImagesKHR(m_VkDevice, m_VkSwapChain, &ImageCount, nullptr);
+	m_VkSwapChainImages.resize(ImageCount);
+	vkGetSwapchainImagesKHR(m_VkDevice, m_VkSwapChain, &ImageCount, m_VkSwapChainImages.data());
+
+	m_VkSwapChainImageFormat = SurfaceFormat.format;
+	m_VkSwapChainExtent = Extent;
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__createImageViews()
+{
+	m_VkSwapChainImageViews.resize(m_VkSwapChainImages.size());
+
+	for (size_t i = 0; i < m_VkSwapChainImages.size(); i++)
+	{
+		VkImageViewCreateInfo CreateInfo = {};
+		CreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		CreateInfo.image = m_VkSwapChainImages[i];
+		CreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		CreateInfo.format = m_VkSwapChainImageFormat;
+		CreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+		CreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+		CreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+		CreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+		CreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		CreateInfo.subresourceRange.baseMipLevel = 0;
+		CreateInfo.subresourceRange.levelCount = 1;
+		CreateInfo.subresourceRange.baseArrayLayer = 0;
+		CreateInfo.subresourceRange.layerCount = 1;
+
+		if (vkCreateImageView(m_VkDevice, &CreateInfo, nullptr, &m_VkSwapChainImageViews[i]) != VK_SUCCESS)
+			throw std::runtime_error("failed to create image views!");
+	}
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__createGraphicsPipeline()
+{
+	auto VertShaderCode = __readFile("shaders/helloTriangle_vs.glsl");
+	auto FragShaderCode = __readFile("shaders/helloTriangle_fs.glsl");
+
+	VkShaderModule VertShaderModule = __createShaderModule(VertShaderCode);
+	VkShaderModule FragShaderModule = __createShaderModule(FragShaderCode);
+
+	VkPipelineShaderStageCreateInfo VertShaderStageInfo = {};
+	VertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	VertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+	VertShaderStageInfo.module = VertShaderModule;
+	VertShaderStageInfo.pName = "main";
+
+	VkPipelineShaderStageCreateInfo FragShaderStageInfo = {};
+	FragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	FragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	FragShaderStageInfo.module = FragShaderModule;
+	FragShaderStageInfo.pName = "main";
+
+	VkPipelineShaderStageCreateInfo ShaderStages[] = { VertShaderStageInfo, FragShaderStageInfo };
+
+	vkDestroyShaderModule(m_VkDevice, FragShaderModule, nullptr);
+	vkDestroyShaderModule(m_VkDevice, VertShaderModule, nullptr);
+}
+
+//******************************************************************************************
+//FUNCTION:
+VkShaderModule CHelloTriangleApplication::__createShaderModule(const std::vector<char>& vCode)
+{
+	VkShaderModuleCreateInfo CreateInfo = {};
+	CreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	CreateInfo.codeSize = vCode.size();
+	CreateInfo.pCode = reinterpret_cast<const uint32_t*>(vCode.data());
+
+	VkShaderModule ShaderModule;
+	if (vkCreateShaderModule(m_VkDevice, &CreateInfo, nullptr, &ShaderModule) != VK_SUCCESS)
+		throw std::runtime_error("failed to create shader module!");
+
+	return ShaderModule;
+}
+
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__mainLoop()
 {
 	while (!glfwWindowShouldClose(m_pGLFWWindow)) { glfwPollEvents(); }
 }
 
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__cleanup()
 {
+	for (auto ImageView : m_VkSwapChainImageViews) vkDestroyImageView(m_VkDevice, ImageView, nullptr);
+	vkDestroySwapchainKHR(m_VkDevice, m_VkSwapChain, nullptr);
+	vkDestroyDevice(m_VkDevice, nullptr);
+
+	if (m_EnableValidationLayers) __destroyDebugUtilsMessengerEXT(m_VkInstance, m_VkDebugCallback, nullptr);
+
+	vkDestroySurfaceKHR(m_VkInstance, m_VkSurface, nullptr);
 	vkDestroyInstance(m_VkInstance, nullptr);
 	glfwDestroyWindow(m_pGLFWWindow);
 	glfwTerminate();
 }
 
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__createVulkanInstance()
 {
+	if (m_EnableValidationLayers && !__checkValidationLayerSupport())
+		throw std::runtime_error("validation layers requested, but not available!");
+
 	VkApplicationInfo AppInfo = {};
 	AppInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	AppInfo.pApplicationName = "Hello Triangle";
@@ -54,13 +341,255 @@ void CHelloTriangleApplication::__createVulkanInstance()
 	CreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	CreateInfo.pApplicationInfo = &AppInfo;
 
-	uint32_t GLFWExtensionCount = 0;
-	const char** pGLFWExtensions = glfwGetRequiredInstanceExtensions(&GLFWExtensionCount);
+	auto Extensions = __getRequiredExtensions();
+	CreateInfo.enabledExtensionCount = static_cast<uint32_t>(Extensions.size());
+	CreateInfo.ppEnabledExtensionNames = Extensions.data();
 
-	CreateInfo.enabledExtensionCount = GLFWExtensionCount;
-	CreateInfo.ppEnabledExtensionNames = pGLFWExtensions;
-	CreateInfo.enabledLayerCount = 0;
+	if (m_EnableValidationLayers)
+	{
+		CreateInfo.enabledLayerCount = static_cast<uint32_t>(VALIDATION_LAYERS.size());
+		CreateInfo.ppEnabledLayerNames = VALIDATION_LAYERS.data();
+	}
+	else
+	{
+		CreateInfo.enabledLayerCount = 0;
+	}
 
 	if (vkCreateInstance(&CreateInfo, nullptr, &m_VkInstance) != VK_SUCCESS)
 		throw std::runtime_error("failed to create instance!");
+}
+
+//******************************************************************************************
+//FUNCTION:
+bool CHelloTriangleApplication::__checkValidationLayerSupport()
+{
+	uint32_t LayerCount;
+	vkEnumerateInstanceLayerProperties(&LayerCount, nullptr);
+
+	std::vector<VkLayerProperties> AvaliableLayers(LayerCount);
+	vkEnumerateInstanceLayerProperties(&LayerCount, AvaliableLayers.data());
+
+	for (auto LayerName : VALIDATION_LAYERS)
+	{
+		bool LayerFound = false;
+
+		for (const auto& layerProperties : AvaliableLayers)
+			if (strcmp(LayerName, layerProperties.layerName) == 0) { LayerFound = true; break; }
+
+		if (!LayerFound) return false;
+	}
+
+	return true;
+}
+
+//******************************************************************************************
+//FUNCTION:
+bool CHelloTriangleApplication::__checkDeviceExtensionSupport(VkPhysicalDevice vDevice)
+{
+	uint32_t ExtensionCount;
+	vkEnumerateDeviceExtensionProperties(vDevice, nullptr, &ExtensionCount, nullptr);
+
+	std::vector<VkExtensionProperties> AvailableExtensions(ExtensionCount);
+	vkEnumerateDeviceExtensionProperties(vDevice, nullptr, &ExtensionCount, AvailableExtensions.data());
+
+	std::set<std::string> RequiredExtensions(DEVICE_EXTNESIONS.begin(), DEVICE_EXTNESIONS.end());
+
+	for (const auto& Extension : AvailableExtensions) {
+		RequiredExtensions.erase(Extension.extensionName);
+	}
+
+	return RequiredExtensions.empty();
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__setupDebugCallback()
+{
+	if (!m_EnableValidationLayers) return;
+
+	VkDebugUtilsMessengerCreateInfoEXT CreateInfo = {};
+	CreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+	CreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+	CreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+	CreateInfo.pfnUserCallback = __debugCallback;
+	CreateInfo.pUserData = nullptr; // Optional
+
+	if (__createDebugUtilsMessengerEXT(m_VkInstance, &CreateInfo, nullptr, &m_VkDebugCallback) != VK_SUCCESS)
+		throw std::runtime_error("failed to set up debug callback!");
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__createSurface()
+{
+	if (glfwCreateWindowSurface(m_VkInstance, m_pGLFWWindow, nullptr, &m_VkSurface) != VK_SUCCESS)
+		throw std::runtime_error("failed to create window surface!");
+}
+
+//******************************************************************************************
+//FUNCTION:
+bool CHelloTriangleApplication::__isDeviceSuitable(VkPhysicalDevice vDevice)
+{
+	SQueueFamilyIndices Indices = __findQueueFamilies(vDevice);
+
+	bool ExtensionsSupported = __checkDeviceExtensionSupport(vDevice);
+
+	bool SwapChainAdequate = false;
+	if (ExtensionsSupported)
+	{
+		SSwapChainSupportDetails SwapChainSupport = __querySwapChainSupport(vDevice);
+		SwapChainAdequate = !SwapChainSupport.Formats.empty() && !SwapChainSupport.PresentModes.empty();
+	}
+
+	return Indices.isComplete() && ExtensionsSupported && SwapChainAdequate;
+}
+
+//******************************************************************************************
+//FUNCTION:
+std::vector<const char*> CHelloTriangleApplication::__getRequiredExtensions()
+{
+	uint32_t GLFWExtensionCount = 0;
+	const char** pGLFWExtensions = glfwGetRequiredInstanceExtensions(&GLFWExtensionCount);
+
+	std::vector<const char*> Extensions(pGLFWExtensions, pGLFWExtensions + GLFWExtensionCount);
+
+	if (m_EnableValidationLayers)
+		Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+	return Extensions;
+}
+
+//******************************************************************************************
+//FUNCTION:
+SQueueFamilyIndices CHelloTriangleApplication::__findQueueFamilies(VkPhysicalDevice vDevice)
+{
+	SQueueFamilyIndices Indices;
+
+	uint32_t QueueFamilyCount = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(vDevice, &QueueFamilyCount, nullptr);
+
+	std::vector<VkQueueFamilyProperties> QueueFamilies(QueueFamilyCount);
+	vkGetPhysicalDeviceQueueFamilyProperties(vDevice, &QueueFamilyCount, QueueFamilies.data());
+
+	int i = 0;
+	for (const auto& queueFamily : QueueFamilies)
+	{
+		if (queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+			Indices.GraphicsFamily = i;
+
+		VkBool32 PresentSupport = false;
+		vkGetPhysicalDeviceSurfaceSupportKHR(vDevice, i, m_VkSurface, &PresentSupport);
+
+		if (queueFamily.queueCount > 0 && PresentSupport) {
+			Indices.PresentFamily = i;
+		}
+
+		if (Indices.isComplete()) break;
+
+		i++;
+	}
+
+	return Indices;
+}
+
+//******************************************************************************************
+//FUNCTION:
+SSwapChainSupportDetails CHelloTriangleApplication::__querySwapChainSupport(VkPhysicalDevice vDevice)
+{
+	SSwapChainSupportDetails Details;
+
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vDevice, m_VkSurface, &Details.Capabilities);
+
+	uint32_t FormatCount;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(vDevice, m_VkSurface, &FormatCount, nullptr);
+
+	if (FormatCount != 0)
+	{
+		Details.Formats.resize(FormatCount);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(vDevice, m_VkSurface, &FormatCount, Details.Formats.data());
+	}
+
+	uint32_t PresentModeCount;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(vDevice, m_VkSurface, &PresentModeCount, nullptr);
+
+	if (PresentModeCount != 0)
+	{
+		Details.PresentModes.resize(PresentModeCount);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(vDevice, m_VkSurface, &PresentModeCount, Details.PresentModes.data());
+	}
+
+	return Details;
+}
+
+//******************************************************************************************
+//FUNCTION:
+VkSurfaceFormatKHR CHelloTriangleApplication::__chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& vAvailableFormats)
+{
+	if (vAvailableFormats.size() == 1 && vAvailableFormats[0].format == VK_FORMAT_UNDEFINED) {
+		return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+	}
+
+	for (const auto& AvailableFormat : vAvailableFormats)
+	{
+		if (AvailableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && AvailableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+		{
+			return AvailableFormat;
+		}
+	}
+
+	return vAvailableFormats[0];
+}
+
+//******************************************************************************************
+//FUNCTION:
+VkPresentModeKHR CHelloTriangleApplication::__chooseSwapPresentMode(const std::vector<VkPresentModeKHR> vAvailablePresentModes)
+{
+	VkPresentModeKHR BestMode = VK_PRESENT_MODE_FIFO_KHR;
+
+	for (const auto& AvailablePresentMode : vAvailablePresentModes)
+	{
+		if (AvailablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+			return AvailablePresentMode;
+		else if (AvailablePresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+			BestMode = AvailablePresentMode;
+	}
+
+	return BestMode;
+}
+
+//******************************************************************************************
+//FUNCTION:
+VkExtent2D CHelloTriangleApplication::__chooseSwapExtent(const VkSurfaceCapabilitiesKHR& vCapabilities)
+{
+	if (vCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+	{
+		return vCapabilities.currentExtent;
+	}
+	else
+	{
+		VkExtent2D ActualExtent = { WINDOW_WIDTH, WINDOW_HEIGHT };
+
+		ActualExtent.width = std::max(vCapabilities.minImageExtent.width, std::min(vCapabilities.maxImageExtent.width, ActualExtent.width));
+		ActualExtent.height = std::max(vCapabilities.minImageExtent.height, std::min(vCapabilities.maxImageExtent.height, ActualExtent.height));
+
+		return ActualExtent;
+	}
+}
+
+//******************************************************************************************
+//FUNCTION:
+VkResult CHelloTriangleApplication::__createDebugUtilsMessengerEXT(VkInstance vInstance, const VkDebugUtilsMessengerCreateInfoEXT* vCreateInfo, const VkAllocationCallbacks* vAllocator, VkDebugUtilsMessengerEXT* vCallback)
+{
+	auto Func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(vInstance, "vkCreateDebugUtilsMessengerEXT");
+
+	if (Func) return Func(vInstance, vCreateInfo, vAllocator, vCallback);
+	else return VK_ERROR_EXTENSION_NOT_PRESENT;
+}
+
+//******************************************************************************************
+//FUNCTION:
+void CHelloTriangleApplication::__destroyDebugUtilsMessengerEXT(VkInstance vInstance, VkDebugUtilsMessengerEXT vCallback, const VkAllocationCallbacks* vAllocator)
+{
+	auto Func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(vInstance, "vkDestroyDebugUtilsMessengerEXT");
+	if (Func) Func(vInstance, vCallback, vAllocator);
 }

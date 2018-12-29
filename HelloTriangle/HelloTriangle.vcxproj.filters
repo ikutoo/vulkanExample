@@ -26,16 +26,16 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\vert.spv">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
-    <None Include="shaders\frag.spv">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="HelloTriangleApplication.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\helloTriangle_fs.glsl">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="shaders\helloTriangle_vs.glsl">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

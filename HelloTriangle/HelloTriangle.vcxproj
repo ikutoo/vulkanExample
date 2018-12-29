@@ -164,11 +164,11 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\frag.spv" />
-    <None Include="shaders\vert.spv" />
+    <ClInclude Include="HelloTriangleApplication.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="HelloTriangleApplication.h" />
+    <None Include="shaders\helloTriangle_fs.glsl" />
+    <None Include="shaders\helloTriangle_vs.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
