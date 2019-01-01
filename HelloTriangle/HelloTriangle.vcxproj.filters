@@ -31,10 +31,10 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\helloTriangle_fs.glsl">
+    <None Include="shaders\helloTriangle.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="shaders\helloTriangle_vs.glsl">
+    <None Include="shaders\helloTriangle.vert">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>
