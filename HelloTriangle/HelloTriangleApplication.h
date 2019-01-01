@@ -42,6 +42,7 @@ private:
 	VkRenderPass				m_VkRenderPass = VK_NULL_HANDLE;
 	VkPipeline					m_VkGraphicsPipeline = VK_NULL_HANDLE;
 	VkCommandPool				m_VkCommandPool = VK_NULL_HANDLE;
+	VkBuffer					m_VkVertexBuffer = VK_NULL_HANDLE;
 	VkFormat					m_VkSwapChainImageFormat;
 	VkExtent2D					m_VkSwapChainExtent;
 
@@ -76,6 +77,7 @@ private:
 	void __createGraphicsPipeline();
 	void __createFrameBuffers();
 	void __createCommandPool();
+	void __createVertexBuffer();
 	void __createCommandBuffers();
 	void __createSyncObjects();
 

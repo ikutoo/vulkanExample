@@ -3,6 +3,8 @@
 #include <set>
 #include <algorithm>
 #include <fstream>
+#include <array>
+#include <glm/glm.hpp>
 
 namespace
 {
@@ -11,6 +13,44 @@ namespace
 	const int MAX_FRAMES_IN_FLIGHT = 2;
 	const std::vector<const char*> VALIDATION_LAYERS = { "VK_LAYER_LUNARG_standard_validation" };
 	const std::vector<const char*> DEVICE_EXTNESIONS = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
+	struct Vertex
+	{
+		glm::vec2 Pos;
+		glm::vec3 Color;
+
+		static VkVertexInputBindingDescription getBindingDescription()
+		{
+			VkVertexInputBindingDescription BindingDescription = {};
+			BindingDescription.binding = 0;
+			BindingDescription.stride = sizeof(Vertex);
+			BindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+			return BindingDescription;
+		}
+
+		static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+		{
+			std::array<VkVertexInputAttributeDescription, 2> AttributeDescriptions = {};
+			AttributeDescriptions[0].binding = 0;
+			AttributeDescriptions[0].location = 0;
+			AttributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+			AttributeDescriptions[0].offset = offsetof(Vertex, Pos);
+			AttributeDescriptions[1].binding = 0;
+			AttributeDescriptions[1].location = 1;
+			AttributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+			AttributeDescriptions[1].offset = offsetof(Vertex, Color);
+
+			return AttributeDescriptions;
+		}
+	};
+
+	const std::vector<Vertex> TRIANGLE_VERTICES =
+	{
+		{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+		{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	};
 }
 
 //******************************************************************************************
@@ -94,6 +134,7 @@ void CHelloTriangleApplication::__initVulkan()
 	__createGraphicsPipeline();
 	__createFrameBuffers();
 	__createCommandPool();
+	__createVertexBuffer();
 	__createCommandBuffers();
 	__createSyncObjects();
 }
@@ -364,10 +405,14 @@ void CHelloTriangleApplication::__createGraphicsPipeline()
 
 	VkPipelineShaderStageCreateInfo ShaderStages[] = { VertShaderStageInfo, FragShaderStageInfo };
 
+	auto BindingDescription = Vertex::getBindingDescription();
+	auto AttributeDescriptions = Vertex::getAttributeDescriptions();
 	VkPipelineVertexInputStateCreateInfo VertexInputInfo = {};
 	VertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-	VertexInputInfo.vertexBindingDescriptionCount = 0;
-	VertexInputInfo.vertexAttributeDescriptionCount = 0;
+	VertexInputInfo.vertexBindingDescriptionCount = 1;
+	VertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(AttributeDescriptions.size());
+	VertexInputInfo.pVertexBindingDescriptions = &BindingDescription;
+	VertexInputInfo.pVertexAttributeDescriptions = AttributeDescriptions.data();
 
 	VkPipelineInputAssemblyStateCreateInfo InputAssembly = {};
 	InputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -493,6 +538,20 @@ void CHelloTriangleApplication::__createCommandPool()
 
 //******************************************************************************************
 //FUNCTION:
+void CHelloTriangleApplication::__createVertexBuffer()
+{
+	VkBufferCreateInfo BufferInfo = {};
+	BufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	BufferInfo.size = sizeof(TRIANGLE_VERTICES[0]) * TRIANGLE_VERTICES.size();
+	BufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	BufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	if (vkCreateBuffer(m_VkDevice, &BufferInfo, nullptr, &m_VkVertexBuffer) != VK_SUCCESS)
+		throw std::runtime_error("failed to create vertex buffer!");
+}
+
+//******************************************************************************************
+//FUNCTION:
 void CHelloTriangleApplication::__createCommandBuffers()
 {
 	m_VkCommandBuffers.resize(m_VkSwapChainFramebuffers.size());
@@ -604,6 +663,7 @@ void CHelloTriangleApplication::__cleanup()
 		vkDestroyFence(m_VkDevice, m_VkInFlightFences[i], nullptr);
 	}
 
+	vkDestroyBuffer(m_VkDevice, m_VkVertexBuffer, nullptr);
 	vkDestroyCommandPool(m_VkDevice, m_VkCommandPool, nullptr);
 
 	for (auto Framebuffer : m_VkSwapChainFramebuffers) vkDestroyFramebuffer(m_VkDevice, Framebuffer, nullptr);
